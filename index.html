@@ -368,6 +368,8 @@
                 this.velocity.y += dy * this.speed * 0.2;
 
                 // Mobile Touch Movement Override
+                let canTouchShoot = false; // Flag to determine if we should shoot on mobile
+
                 if (touchInput.active) {
                     const tdx = touchInput.x - this.x;
                     const tdy = touchInput.y - this.y;
@@ -378,26 +380,37 @@
                         this.velocity.y += (tdy / dist) * this.speed * 0.15;
                     }
                     
-                    // Auto-aim at the closest enemy for mobile
+                    const touchAngle = Math.atan2(tdy, tdx);
+                    this.angle = touchAngle; // Default aim towards touch
+
+                    // Auto-aim at the closest enemy within +/- 30 degrees
                     if (enemies.length > 0) {
                         let closestEnemy = null;
                         let minDistanceSq = Infinity;
+                        const maxAngleDiff = 30 * (Math.PI / 180); // 30 degrees in radians
                         
                         for (let i = 0; i < enemies.length; i++) {
                             const enemy = enemies[i];
-                            const distSq = (enemy.x - this.x) ** 2 + (enemy.y - this.y) ** 2;
-                            if (distSq < minDistanceSq) {
-                                minDistanceSq = distSq;
-                                closestEnemy = enemy;
+                            const enemyAngle = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+                            
+                            // Calculate smallest angular difference
+                            let angleDiff = enemyAngle - touchAngle;
+                            // Normalize angle difference to be between -PI and PI
+                            angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
+                            
+                            if (Math.abs(angleDiff) <= maxAngleDiff) {
+                                const distSq = (enemy.x - this.x) ** 2 + (enemy.y - this.y) ** 2;
+                                if (distSq < minDistanceSq) {
+                                    minDistanceSq = distSq;
+                                    closestEnemy = enemy;
+                                }
                             }
                         }
                         
                         if (closestEnemy) {
                             this.angle = Math.atan2(closestEnemy.y - this.y, closestEnemy.x - this.x);
+                            canTouchShoot = true; // Enemy found in cone, allow shooting
                         }
-                    } else {
-                        // Fallback to aiming at touch point if no enemies are present
-                        this.angle = Math.atan2(tdy, tdx);
                     }
                 } else {
                     // Aim at mouse cursor
@@ -418,7 +431,10 @@
 
                 // Shooting logic
                 const currentTime = Date.now();
-                if ((mouse.isDown || touchInput.active) && currentTime - this.lastShotTime > this.fireRate) {
+                const shouldShootDesktop = (!touchInput.active && mouse.isDown);
+                const shouldShootMobile = (touchInput.active && canTouchShoot);
+
+                if ((shouldShootDesktop || shouldShootMobile) && currentTime - this.lastShotTime > this.fireRate) {
                     this.shoot();
                     this.lastShotTime = currentTime;
                 }
