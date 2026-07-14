@@ -206,6 +206,12 @@
                     <div id="xp-bar"></div>
                 </div>
             </div>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: flex-start; z-index: 50; pointer-events: auto;">
+                <button id="autoAimBtn" class="btn" style="padding: 8px 20px; font-size: 0.9rem; border-radius: 20px; border-color: #f0f; color: #f0f; box-shadow: 0 0 10px #f0f, inset 0 0 5px #f0f; text-shadow: 0 0 5px #f0f;">
+                    AUTO-AIM: ON
+                </button>
+                <div style="font-size: 0.7rem; color: #ddd; margin-top: 8px; text-shadow: 0 0 2px #000;">Press 'E' to toggle</div>
+            </div>
             <div>
                 <div class="neon-text mb-2 text-right" style="font-size: 1rem; text-shadow: 0 0 5px #fff, 0 0 10px #fff, 0 0 20px #0ff;">HULL INTEGRITY</div>
                 <div class="health-bar-container">
@@ -218,8 +224,9 @@
     <div id="start-screen" class="screen">
         <h1 class="title">NEON SURVIVOR</h1>
         <p class="subtitle">
-            <b>Desktop:</b> WASD to move, Mouse to aim, Click to shoot.<br>
-            <b>Mobile:</b> Touch and hold to move and auto-fire.
+            <b>Desktop:</b> WASD to move, Mouse to aim, Click/Space to shoot.<br>
+            <b>Keyboard-Only:</b> Toggle Auto-Aim on and steer with WASD.<br>
+            <b>Mobile:</b> Touch and hold to move and shoot.
         </p>
         <button id="start-btn" class="btn">Start Game</button>
     </div>
@@ -258,6 +265,7 @@
         const xpBar = document.getElementById('xp-bar');
         const levelUpScreen = document.getElementById('level-up-screen');
         const upgradeContainer = document.getElementById('upgrade-container');
+        const autoAimBtn = document.getElementById('autoAimBtn');
 
         // Set canvas size
         canvas.width = window.innerWidth;
@@ -294,11 +302,32 @@
         
         // Input States
         const keys = {
-            w: false, a: false, s: false, d: false,
+            w: false, a: false, s: false, d: false, ' ': false, e: false,
             ArrowUp: false, ArrowLeft: false, ArrowDown: false, ArrowRight: false
         };
         const mouse = { x: canvas.width / 2, y: canvas.height / 2, isDown: false };
         const touchInput = { active: false, x: 0, y: 0 };
+        
+        let lastInputType = 'mouse'; // Tracks if you are actively using 'mouse', 'keyboard', or 'touch'
+        let autoAimEnabled = true;
+
+        function toggleAutoAim() {
+            autoAimEnabled = !autoAimEnabled;
+            autoAimBtn.innerText = `AUTO-AIM: ${autoAimEnabled ? 'ON' : 'OFF'}`;
+            if (autoAimEnabled) {
+                autoAimBtn.style.borderColor = '#f0f';
+                autoAimBtn.style.color = '#f0f';
+                autoAimBtn.style.boxShadow = '0 0 10px #f0f, inset 0 0 5px #f0f';
+                autoAimBtn.style.textShadow = '0 0 5px #f0f';
+            } else {
+                autoAimBtn.style.borderColor = '#555';
+                autoAimBtn.style.color = '#ccc';
+                autoAimBtn.style.boxShadow = 'none';
+                autoAimBtn.style.textShadow = 'none';
+            }
+        }
+        
+        autoAimBtn.addEventListener('click', toggleAutoAim);
 
         class Player {
             constructor(x, y, radius, color) {
@@ -364,13 +393,8 @@
                     dy /= length;
                 }
 
-                this.velocity.x += dx * this.speed * 0.2; // Acceleration
-                this.velocity.y += dy * this.speed * 0.2;
-
-                // Mobile Touch Movement Override
-                let canTouchShoot = false; // Flag to determine if we should shoot on mobile
-
-                if (touchInput.active) {
+                // Apply velocities based on input mode
+                if (lastInputType === 'touch' && touchInput.active) {
                     const tdx = touchInput.x - this.x;
                     const tdy = touchInput.y - this.y;
                     const dist = Math.sqrt(tdx * tdx + tdy * tdy);
@@ -379,42 +403,61 @@
                         this.velocity.x += (tdx / dist) * this.speed * 0.15;
                         this.velocity.y += (tdy / dist) * this.speed * 0.15;
                     }
-                    
-                    const touchAngle = Math.atan2(tdy, tdx);
-                    this.angle = touchAngle; // Default aim towards touch
+                } else {
+                    this.velocity.x += dx * this.speed * 0.2; // Acceleration
+                    this.velocity.y += dy * this.speed * 0.2;
+                }
 
-                    // Auto-aim at the closest enemy within +/- 30 degrees
-                    if (enemies.length > 0) {
-                        let closestEnemy = null;
-                        let minDistanceSq = Infinity;
-                        const maxAngleDiff = 30 * (Math.PI / 180); // 30 degrees in radians
+                // Determine base aiming angle based on active input
+                let intentAngle = this.angle;
+                if (lastInputType === 'touch' && touchInput.active) {
+                    intentAngle = Math.atan2(touchInput.y - this.y, touchInput.x - this.x);
+                } else if (lastInputType === 'mouse') {
+                    intentAngle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
+                } else if (lastInputType === 'keyboard' && (dx !== 0 || dy !== 0)) {
+                    // Keyboard-only players steer by flying, point ship forward!
+                    intentAngle = Math.atan2(dy, dx);
+                }
+
+                this.angle = intentAngle;
+                let canShoot = false;
+
+                if (autoAimEnabled) {
+                    // Auto-aim at the closest enemy within +/- 30 degrees of our intent angle
+                    let closestEnemy = null;
+                    let minDistanceSq = Infinity;
+                    const maxAngleDiff = 30 * (Math.PI / 180); 
+                    
+                    for (let i = 0; i < enemies.length; i++) {
+                        const enemy = enemies[i];
+                        const enemyAngle = Math.atan2(enemy.y - this.y, enemy.x - this.x);
                         
-                        for (let i = 0; i < enemies.length; i++) {
-                            const enemy = enemies[i];
-                            const enemyAngle = Math.atan2(enemy.y - this.y, enemy.x - this.x);
-                            
-                            // Calculate smallest angular difference
-                            let angleDiff = enemyAngle - touchAngle;
-                            // Normalize angle difference to be between -PI and PI
-                            angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
-                            
-                            if (Math.abs(angleDiff) <= maxAngleDiff) {
-                                const distSq = (enemy.x - this.x) ** 2 + (enemy.y - this.y) ** 2;
-                                if (distSq < minDistanceSq) {
-                                    minDistanceSq = distSq;
-                                    closestEnemy = enemy;
-                                }
+                        let angleDiff = enemyAngle - intentAngle;
+                        angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
+                        
+                        if (Math.abs(angleDiff) <= maxAngleDiff) {
+                            const distSq = (enemy.x - this.x) ** 2 + (enemy.y - this.y) ** 2;
+                            if (distSq < minDistanceSq) {
+                                minDistanceSq = distSq;
+                                closestEnemy = enemy;
                             }
                         }
-                        
-                        if (closestEnemy) {
-                            this.angle = Math.atan2(closestEnemy.y - this.y, closestEnemy.x - this.x);
-                            canTouchShoot = true; // Enemy found in cone, allow shooting
-                        }
                     }
+                    
+                    if (closestEnemy) {
+                        this.angle = Math.atan2(closestEnemy.y - this.y, closestEnemy.x - this.x);
+                        canShoot = true; // Enemy found in cone, allow auto-shooting
+                    }
+                }
+
+                // Manual shooting overrides
+                if (!autoAimEnabled) {
+                    if (lastInputType === 'touch' && touchInput.active) canShoot = true;
+                    if (lastInputType === 'mouse' && mouse.isDown) canShoot = true;
+                    if (lastInputType === 'keyboard' && keys[' ']) canShoot = true;
                 } else {
-                    // Aim at mouse cursor
-                    this.angle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
+                    // Even with auto-aim ON, allow manual force-fire
+                    if (mouse.isDown || keys[' ']) canShoot = true;
                 }
 
                 // Apply friction
@@ -429,12 +472,9 @@
                 this.x = Math.max(this.radius, Math.min(canvas.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(canvas.height - this.radius, this.y));
 
-                // Shooting logic
+                // Shooting Execution
                 const currentTime = Date.now();
-                const shouldShootDesktop = (!touchInput.active && mouse.isDown);
-                const shouldShootMobile = (touchInput.active && canTouchShoot);
-
-                if ((shouldShootDesktop || shouldShootMobile) && currentTime - this.lastShotTime > this.fireRate) {
+                if (canShoot && currentTime - this.lastShotTime > this.fireRate) {
                     this.shoot();
                     this.lastShotTime = currentTime;
                 }
@@ -836,18 +876,35 @@
         
         // --- Keyboard ---
         window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
             if (keys.hasOwnProperty(e.key)) keys[e.key] = true;
+            if (keys.hasOwnProperty(key)) keys[key] = true;
+
+            // Switch to keyboard mode if movement/shooting keys are pressed
+            if (['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright',' '].includes(key)) {
+                lastInputType = 'keyboard';
+            }
+            
+            if (key === 'e') {
+                toggleAutoAim();
+            }
         });
         window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
             if (keys.hasOwnProperty(e.key)) keys[e.key] = false;
+            if (keys.hasOwnProperty(key)) keys[key] = false;
         });
 
         // --- Mouse ---
         window.addEventListener('mousemove', (e) => {
             mouse.x = e.clientX;
             mouse.y = e.clientY;
+            lastInputType = 'mouse';
         });
-        window.addEventListener('mousedown', () => { mouse.isDown = true; });
+        window.addEventListener('mousedown', () => { 
+            mouse.isDown = true; 
+            lastInputType = 'mouse';
+        });
         window.addEventListener('mouseup', () => { mouse.isDown = false; });
 
         // --- Touch (Mobile) ---
@@ -858,12 +915,14 @@
             touchInput.active = true;
             touchInput.x = e.touches[0].clientX;
             touchInput.y = e.touches[0].clientY;
+            lastInputType = 'touch';
         }, {passive: false});
 
         window.addEventListener('touchmove', (e) => {
             if(touchInput.active) {
                 touchInput.x = e.touches[0].clientX;
                 touchInput.y = e.touches[0].clientY;
+                lastInputType = 'touch';
             }
         }, {passive: false});
 
